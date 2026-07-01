@@ -398,7 +398,12 @@ window.addEventListener("resize",()=>{for(const k in CHARTS){try{CHARTS[k].resiz
 const AXBASE={axisLine:{lineStyle:{color:PAL.hair}},axisTick:{show:false},axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11},splitLine:{lineStyle:{color:"#eceee9"}}};
 const TT={backgroundColor:"#fbfcfa",borderColor:PAL.hair,borderWidth:1,textStyle:{color:PAL.ink,fontFamily:"Inter",fontSize:13},padding:[9,12],extraCssText:"box-shadow:0 8px 24px -10px rgba(28,33,28,.28);border-radius:10px"};
 const GRID=(o={})=>Object.assign({left:8,right:14,top:18,bottom:6,containLabel:true},o);
-const srcLine=(id,stand)=>`<span class="did">Datensatz ${id}</span><span>Stand ${stand}</span>`;
+// Direkter Link zur Datensatzseite auf data.gr.ch (Opendatasoft-Explore-Portal).
+const dsUrl=id=>`https://data.gr.ch/explore/dataset/${encodeURIComponent(id)}/information/`;
+const dsLink=id=>`<a href="${dsUrl(id)}" target="_blank" rel="noopener">${esc(id)}</a>`;
+// "src"-Werte können mehrere, durch " · " getrennte Dataset-IDs enthalten (z.B. zwei Quellen für eine Kennzahl).
+const srcLinks=src=>String(src).split(" · ").map(id=>dsLink(id.trim())).join(" · ");
+const srcLine=(id,stand)=>`<span class="did">Datensatz ${srcLinks(id)}</span><span>Stand ${stand}</span>`;
 
 /* ==========================================================================
    RÄUMLICHE HIERARCHIE
@@ -578,7 +583,7 @@ async function renderBev(unit){
       {cls:"k-slate",kl:"Bevölkerungsdichte",kv:dens!=null?fmtDec(dens,1):NODATA,unit:"Einw./km²",cmp:(unit.bfs!=="GR"?cmp("Kanton",dens,cantonDens,v=>fmtDec(v,1)):"")+(unit.level==="gemeinde"?cmp("Region",dens,regionDens,v=>fmtDec(v,1)):""),src:DS.bil+" · "+DS.grenz},
       {cls:"k-ochre",kl:"Ausländeranteil",kv:ausShare!=null?fmtDec(ausShare,1):NODATA,unit:"%",cmp:(unit.bfs!=="GR"&&cCanton?cmp("Kanton",ausShare,cCanton.aus,v=>fmtDec(v,1),"%"):"")+(unit.level==="gemeinde"&&cRegion?cmp("Region",ausShare,cRegion.aus,v=>fmtDec(v,1),"%"):""),src:DS.bil},
       {cls:"k-rust",kl:"Wanderungssaldo "+Y,kv:fmtSigned(cur.wander),cmp:`<div class="cmp-row">Geburtensaldo <b>${fmtSigned(cur.gsaldo)}</b></div>`,src:DS.bil}
-    ].map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.kl}</div><div class="kv${k.kv===NODATA?" nd":""}">${k.kv}${k.unit&&k.kv!==NODATA?`<small>${k.unit}</small>`:""}</div><div class="kcmp">${k.cmp}</div><div class="ksrc">Quelle ${k.src}</div></div>`).join("");
+    ].map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.kl}</div><div class="kv${k.kv===NODATA?" nd":""}">${k.kv}${k.unit&&k.kv!==NODATA?`<small>${k.unit}</small>`:""}</div><div class="kcmp">${k.cmp}</div><div class="ksrc">Quelle ${srcLinks(k.src)}</div></div>`).join("");
 
     // Chart: Bevölkerungsentwicklung
     document.getElementById("sub-bevline").innerHTML=`Ständige Wohnbevölkerung je Jahr, <b>${years[0]}</b> bis <b>${Y}</b>.`;
@@ -688,7 +693,7 @@ async function renderFin(unit){
       {cls:"k-ochre",kl:"Selbstfinanzierungsgrad "+Y,kv:sfg!=null?fmtDec(sfg,0):NODATA,unit:"%",cmp:cmp(peerLabel,sfg,sfgP,v=>fmtDec(v,0),"%"),src:DS.fin},
       {cls:"k-slate",kl:"Selbstfinanzierungsanteil "+Y,kv:sfa!=null?fmtDec(sfa,1):NODATA,unit:"%",cmp:cmp(peerLabel,sfa,sfaP,v=>fmtDec(v,1),"%"),src:DS.fin},
       {cls:"k-sage",kl:"Bruttoverschuldungsanteil "+Y,kv:brutto!=null?fmtDec(brutto,0):NODATA,unit:"%",cmp:cmp(peerLabel,brutto,bruttoP,v=>fmtDec(v,0),"%"),src:DS.fin}
-    ].map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.kl}</div><div class="kv${k.kv===NODATA?" nd":""}">${k.kv}${k.unit&&k.kv!==NODATA?`<small>${k.unit}</small>`:""}</div><div class="kcmp">${k.cmp}</div><div class="ksrc">Quelle ${k.src}</div></div>`).join("");
+    ].map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.kl}</div><div class="kv${k.kv===NODATA?" nd":""}">${k.kv}${k.unit&&k.kv!==NODATA?`<small>${k.unit}</small>`:""}</div><div class="kcmp">${k.cmp}</div><div class="ksrc">Quelle ${srcLinks(k.src)}</div></div>`).join("");
 
     // Zeitreihe Nettoverm./-schuld je Einw. (mit Vergleichsgruppenmittel)
     const netS=seriesOf(FT.net);const nY=Object.keys(netS).map(Number).sort((a,b)=>a-b);
@@ -804,7 +809,7 @@ async function renderEco(unit){
       {cls:"k-slate",kl:"Vollzeitäquivalente "+Y,kv:fmtInt(t.vzae),cmp:t.besch?`<div class="cmp-row">Ø ${fmtDec(t.vzae/t.besch*100,0)}% Pensum</div>`:"",src:headlineSrc},
       {cls:"k-ochre",kl:"Arbeitsstätten "+Y,kv:fmtInt(t.arb),cmp:t.arb?`<div class="cmp-row">Ø ${fmtDec(t.besch/t.arb,1)} Beschäftigte je Stätte</div>`:"",src:headlineSrc},
       {cls:"k-sage",kl:"Tertiärquote "+Y,kv:tertQ!=null?fmtDec(tertQ,1):NODATA,unit:"%",cmp:!isKanton?cmp("Kanton",tertQ,cantonTertQ,v=>fmtDec(v,1),"%"):"",src:DS.eco}
-    ].map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.kl}</div><div class="kv${k.kv===NODATA?" nd":""}">${k.kv}${k.unit&&k.kv!==NODATA?`<small>${k.unit}</small>`:""}</div><div class="kcmp">${k.cmp}</div><div class="ksrc">Quelle ${k.src}</div></div>`).join("");
+    ].map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.kl}</div><div class="kv${k.kv===NODATA?" nd":""}">${k.kv}${k.unit&&k.kv!==NODATA?`<small>${k.unit}</small>`:""}</div><div class="kcmp">${k.cmp}</div><div class="ksrc">Quelle ${srcLinks(k.src)}</div></div>`).join("");
 
     // Donut Sektoren
     document.getElementById("sub-sekdonut").innerHTML=`Verteilung der ${fmtInt(sekTotal)} Beschäftigten auf die drei Wirtschaftssektoren, ${Y}.`;
@@ -857,7 +862,7 @@ function select(){
 }
 function footerSources(){
   const ids=[DS.bil,DS.alt,DS.grenz,DS.fin,DS.eco,DS.ecoKtn,DS.noga,DS.alq,DS.hier];
-  document.getElementById("footSources").innerHTML=ids.map(id=>`<li>${esc(DS_TITLE[id])}<span class="did">${id}</span></li>`).join("");
+  document.getElementById("footSources").innerHTML=ids.map(id=>`<li><a href="${dsUrl(id)}" target="_blank" rel="noopener">${esc(DS_TITLE[id])}<span class="did">${esc(id)}</span></a></li>`).join("");
   const d=new Date();document.getElementById("footUpd").textContent="Live abgerufen · "+d.toLocaleDateString("de-CH",{day:"2-digit",month:"long",year:"numeric"});
 }
 function drawContour(){
