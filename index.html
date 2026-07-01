@@ -716,13 +716,27 @@ async function loadAlq(){if(!ALQ_ALL)ALQ_ALL=await expJson(DS.alq,{select:"datum
 // Aggregation über Gemeinden – für die Sektor-Aufteilung (Primär/Sekundär/Tertiär) gibt es auf
 // data.gr.ch weder für Kanton noch für Region einen Datensatz auf derselben Zählbasis wie DS.eco;
 // diese Aufsummierung bleibt daher für alle Ebenen die einzige verfügbare Quelle der Sektor-Charts.
+// Das Gesamttotal (__total) wird bewusst aus der je Gemeinde mitgelieferten Zeile
+// "Wirtschaftssektor - Total" aufsummiert statt aus den drei Einzelsektoren: Einzelne Sektorwerte
+// können pro Gemeinde aus Datenschutzgründen unterdrückt (null) sein, während die Total-Zeile den
+// echten, ungekürzten Wert enthält. So bleibt das Gesamttotal auch dann vollständig, wenn einzelne
+// Sektor-Segmente für die Donut-/Zeitreihen-Darstellung unvollständig sind.
 function ecoAggregate(rows,memberSet){
   const by={};
-  rows.forEach(r=>{if(!memberSet.has(String(r.gemeinde_code)))return;const s=r.wirtschaftssektor;if(!SEK.includes(s))return;const y=yr(r.jahr);
-    by[y]=by[y]||{};by[y][s]=by[y][s]||{arb:0,besch:0,vzae:0};
+  rows.forEach(r=>{
+    if(!memberSet.has(String(r.gemeinde_code)))return;
+    const s=r.wirtschaftssektor,y=yr(r.jahr);
+    by[y]=by[y]||{};
+    if(s===C.SEK_TOT){
+      by[y].__total=by[y].__total||{arb:0,besch:0,vzae:0};
+      by[y].__total.arb+=+r.arbeitsstaetten||0;by[y].__total.besch+=+r.beschaeftigte||0;by[y].__total.vzae+=+r.vollzeitaequivalente||0;
+      return;
+    }
+    if(!SEK.includes(s))return;
+    by[y][s]=by[y][s]||{arb:0,besch:0,vzae:0};
     by[y][s].arb+=+r.arbeitsstaetten||0;by[y][s].besch+=+r.beschaeftigte||0;by[y][s].vzae+=+r.vollzeitaequivalente||0;
   });
-  Object.keys(by).forEach(y=>{const t={arb:0,besch:0,vzae:0};SEK.forEach(s=>{const v=by[y][s]||{arb:0,besch:0,vzae:0};t.arb+=v.arb;t.besch+=v.besch;t.vzae+=v.vzae;});by[y].__total=t;});
+  Object.keys(by).forEach(y=>{by[y].__total=by[y].__total||{arb:0,besch:0,vzae:0};});
   return by;
 }
 function ktnTotalsByYear(rows){const by={};rows.forEach(r=>{by[yr(r.jahr)]={arb:+r.arbeitsstaetten||0,besch:+r.beschaeftigte||0,vzae:+r.vollzeitaequivalente||0};});return by;}
@@ -747,9 +761,10 @@ async function renderEco(unit){
     if(!years.length)throw new Error("Keine Wirtschaftsdaten für diese Einheit");
     const Y=years[years.length-1];
     const t=isKanton&&ktnByYear[Y]?ktnByYear[Y]:by[Y].__total;
-    // sekTotal bleibt die Gemeinde-summierte Grösse (Basis der Sektor-Charts): tertQ/Donut müssen
-    // intern konsistent mit den angezeigten Sektor-Balken bleiben, auch wenn t (Kopfzahl) für den
-    // Kanton aus der vollständigeren Direktquelle stammt und daher minim höher ausfallen kann.
+    // sekTotal (Nenner für Tertiärquote/Donut) kommt aus der je Gemeinde publizierten Total-Zeile
+    // (siehe ecoAggregate) und ist damit unabhängig von Datenschutz-Unterdrückung einzelner Sektoren.
+    // Für den Kanton kann die Direktquelle (t.besch) minim davon abweichen, da sie nicht über die
+    // Gemeinden aufsummiert wird.
     const sekTotal=by[Y].__total.besch;
     const ct=cantonBy[Y]?cantonBy[Y].__total:null;
     const ctFull=isKanton?t:(ktnByYear[Y]||ct);
