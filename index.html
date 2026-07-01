@@ -268,7 +268,7 @@ a{color:var(--pine);text-decoration:none}a:hover{text-decoration:underline}
       <div class="card"><div class="card-h"><div class="card-t">Beschäftigte nach Wirtschaftssektor</div><div class="card-tag">Aktuellstes Jahr</div></div><div class="card-sub" id="sub-sekdonut"></div><div class="chart" id="c-sekdonut"></div><div class="src" id="src-sekdonut"></div></div>
       <div class="card"><div class="card-h"><div class="card-t">Beschäftigungsentwicklung nach Sektor</div><div class="card-tag">Zeitreihe</div></div><div class="card-sub" id="sub-sekline"></div><div class="chart" id="c-sekline"></div><div class="src" id="src-sekline"></div></div>
     </div>
-    <div class="grid2">
+    <div class="grid2" id="grid-ecoKanton">
       <div class="card"><div class="card-h"><div class="card-t">Branchenstruktur nach NOGA-Abteilung</div><div class="card-tag canton">Kanton GR</div></div><div class="card-sub" id="sub-noga"></div><div class="chart tall" id="c-noga"></div><div class="src" id="src-noga"></div></div>
       <div class="card"><div class="card-h"><div class="card-t">Arbeitslosenquote</div><div class="card-tag canton">Kanton GR</div></div><div class="card-sub" id="sub-alq"></div><div class="chart" id="c-alq"></div><div class="src" id="src-alq"></div></div>
     </div>
@@ -743,11 +743,16 @@ function ktnTotalsByYear(rows){const by={};rows.forEach(r=>{by[yr(r.jahr)]={arb:
 
 async function renderEco(unit){
   const kp=document.getElementById("ecoKpis");
+  const isKanton=unit.bfs==="GR";
+  // NOGA-Branchenstruktur und Arbeitslosenquote liegen auf data.gr.ch ausschliesslich auf
+  // Kantonsebene vor. Bei Region/Gemeinde ist das keine Kennzahl der gewählten Einheit, sondern
+  // reiner Kantonskontext ohne Bezug – daher komplett ausblenden statt nur zu kennzeichnen.
+  document.getElementById("grid-ecoKanton").style.display=isKanton?"":"none";
   kp.innerHTML=Array(4).fill('<div class="kpi"><div class="kl skel" style="width:60%;height:12px"></div><div class="kv skel" style="width:80%;height:30px;margin-top:12px"></div></div>').join("");
-  ["c-sekdonut","c-sekline","c-noga","c-alq"].forEach(chartSkel);
+  ["c-sekdonut","c-sekline"].forEach(chartSkel);
+  if(isKanton)["c-noga","c-alq"].forEach(chartSkel);
   document.getElementById("ecoIntro").innerHTML='<span class="skel" style="width:80%;height:16px;border-radius:4px"></span>';
   try{
-    const isKanton=unit.bfs==="GR";
     const [eco,ktnTotRows]=await Promise.all([loadEco(),loadEcoKanton()]);
     const ktnByYear=ktnTotalsByYear(ktnTotRows);
     // Sektor-Aufteilung (Donut/Zeitreihe/Tertiärquote) bleibt für alle Ebenen Gemeinde-basiert,
@@ -795,29 +800,32 @@ async function renderEco(unit){
     cS.setOption({tooltip:Object.assign({trigger:"axis",valueFormatter:v=>fmtInt(v)},TT),legend:{data:SEK.map(s=>SEK_SHORT[s]),top:0,right:2,itemWidth:11,itemHeight:11,textStyle:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10}},grid:GRID({top:34}),xAxis:Object.assign({type:"category",data:years},AXBASE),yAxis:Object.assign({type:"value",axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11,formatter:v=>fmtInt(v)}},AXBASE),series:SEK.map(s=>({name:SEK_SHORT[s],type:"bar",stack:"b",data:years.map(y=>by[y][s]?by[y][s].besch:0),itemStyle:{color:SEKCOL[s]},barWidth:"56%"}))});
     document.getElementById("src-sekline").innerHTML=srcLine(DS.eco,Y);
 
-    // NOGA (Kanton)
-    const noga=await loadNoga();const nY=maxYr(noga);
-    const nrows=noga.filter(r=>yr(r.jahr)===nY&&r.wirtschaftsabteilung!==C.NOGA_TOT&&(+r.beschaeftigte>0)).sort((a,b)=>(+b.beschaeftigte)-(+a.beschaeftigte)).slice(0,12).reverse();
-    document.getElementById("sub-noga").innerHTML=`Die zwölf grössten Wirtschaftsabteilungen nach Beschäftigten im Kanton, ${nY}.`;
-    const cN=mkChart("c-noga");
-    cN.setOption({tooltip:Object.assign({trigger:"axis",axisPointer:{type:"shadow"},valueFormatter:v=>fmtInt(v)},TT),grid:GRID({left:2,right:44,top:8}),xAxis:Object.assign({type:"value",axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10,formatter:v=>fmtInt(v)}},AXBASE),yAxis:Object.assign({type:"category",data:nrows.map(r=>{const t=r.wirtschaftsabteilung.replace(/^\d+\s*/,"");return (t.length>30?t.slice(0,29)+"…":t);}),axisLabel:{color:PAL.ink3,fontFamily:"Inter",fontSize:10.5}},AXBASE),series:[{type:"bar",data:nrows.map(r=>+r.beschaeftigte),itemStyle:{color:PAL.slate,borderRadius:[0,4,4,0]},barWidth:"66%",label:{show:true,position:"right",formatter:p=>fmtInt(p.value),color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10}}]});
-    document.getElementById("src-noga").innerHTML=srcLine(DS.noga,nY);
+    // NOGA und Arbeitslosenquote: nur bei Kanton-Ansicht relevant (siehe grid-ecoKanton oben) und
+    // deshalb auch nur dann geladen/gerendert.
+    if(isKanton){
+      const noga=await loadNoga();const nY=maxYr(noga);
+      const nrows=noga.filter(r=>yr(r.jahr)===nY&&r.wirtschaftsabteilung!==C.NOGA_TOT&&(+r.beschaeftigte>0)).sort((a,b)=>(+b.beschaeftigte)-(+a.beschaeftigte)).slice(0,12).reverse();
+      document.getElementById("sub-noga").innerHTML=`Die zwölf grössten Wirtschaftsabteilungen nach Beschäftigten im Kanton, ${nY}.`;
+      const cN=mkChart("c-noga");
+      cN.setOption({tooltip:Object.assign({trigger:"axis",axisPointer:{type:"shadow"},valueFormatter:v=>fmtInt(v)},TT),grid:GRID({left:2,right:44,top:8}),xAxis:Object.assign({type:"value",axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10,formatter:v=>fmtInt(v)}},AXBASE),yAxis:Object.assign({type:"category",data:nrows.map(r=>{const t=r.wirtschaftsabteilung.replace(/^\d+\s*/,"");return (t.length>30?t.slice(0,29)+"…":t);}),axisLabel:{color:PAL.ink3,fontFamily:"Inter",fontSize:10.5}},AXBASE),series:[{type:"bar",data:nrows.map(r=>+r.beschaeftigte),itemStyle:{color:PAL.slate,borderRadius:[0,4,4,0]},barWidth:"66%",label:{show:true,position:"right",formatter:p=>fmtInt(p.value),color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10}}]});
+      document.getElementById("src-noga").innerHTML=srcLine(DS.noga,nY);
 
-    // Arbeitslosenquote (Kanton, Jahresmittel + letzter Monat)
-    const alq=await loadAlq();
-    const byY={};alq.forEach(r=>{const y=yr(r.datum);(byY[y]=byY[y]||[]).push(+r.wert);});
-    const aYs=Object.keys(byY).map(Number).sort((a,b)=>a-b);const recent=aYs.filter(y=>y>=aYs[aYs.length-1]-14);
-    const yearlyAvg=recent.map(y=>byY[y].reduce((a,b)=>a+b,0)/byY[y].length);
-    const lastRow=alq.slice().sort((a,b)=>new Date(a.datum)-new Date(b.datum)).pop();
-    const lastDate=lastRow?new Date(lastRow.datum):null;
-    const mLabel=lastDate?lastDate.toLocaleDateString("de-CH",{month:"long",year:"numeric"}):"";
-    document.getElementById("sub-alq").innerHTML=`Jahresmittel seit ${recent[0]}. Aktuellster Monat (${esc(mLabel)}): <b>${lastRow?fmtDec(+lastRow.wert,1)+"%":NODATA}</b>.`;
-    const cA=mkChart("c-alq");
-    cA.setOption({tooltip:Object.assign({trigger:"axis",valueFormatter:v=>fmtDec(v,1)+"%"},TT),grid:GRID({top:14}),xAxis:Object.assign({type:"category",data:recent,boundaryGap:false},AXBASE),yAxis:Object.assign({type:"value",axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11,formatter:v=>v+"%"}},AXBASE),series:[{name:"Arbeitslosenquote",type:"line",smooth:.35,symbol:"circle",symbolSize:5,showSymbol:false,data:yearlyAvg,lineStyle:{color:PAL.rust,width:2.5},itemStyle:{color:PAL.rust},areaStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:"rgba(166,85,47,.16)"},{offset:1,color:"rgba(166,85,47,0)"}])}}]});
-    document.getElementById("src-alq").innerHTML=srcLine(DS.alq,lastDate?mLabel:nY);
+      const alq=await loadAlq();
+      const byY={};alq.forEach(r=>{const y=yr(r.datum);(byY[y]=byY[y]||[]).push(+r.wert);});
+      const aYs=Object.keys(byY).map(Number).sort((a,b)=>a-b);const recent=aYs.filter(y=>y>=aYs[aYs.length-1]-14);
+      const yearlyAvg=recent.map(y=>byY[y].reduce((a,b)=>a+b,0)/byY[y].length);
+      const lastRow=alq.slice().sort((a,b)=>new Date(a.datum)-new Date(b.datum)).pop();
+      const lastDate=lastRow?new Date(lastRow.datum):null;
+      const mLabel=lastDate?lastDate.toLocaleDateString("de-CH",{month:"long",year:"numeric"}):"";
+      document.getElementById("sub-alq").innerHTML=`Jahresmittel seit ${recent[0]}. Aktuellster Monat (${esc(mLabel)}): <b>${lastRow?fmtDec(+lastRow.wert,1)+"%":NODATA}</b>.`;
+      const cA=mkChart("c-alq");
+      cA.setOption({tooltip:Object.assign({trigger:"axis",valueFormatter:v=>fmtDec(v,1)+"%"},TT),grid:GRID({top:14}),xAxis:Object.assign({type:"category",data:recent,boundaryGap:false},AXBASE),yAxis:Object.assign({type:"value",axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11,formatter:v=>v+"%"}},AXBASE),series:[{name:"Arbeitslosenquote",type:"line",smooth:.35,symbol:"circle",symbolSize:5,showSymbol:false,data:yearlyAvg,lineStyle:{color:PAL.rust,width:2.5},itemStyle:{color:PAL.rust},areaStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:"rgba(166,85,47,.16)"},{offset:1,color:"rgba(166,85,47,0)"}])}}]});
+      document.getElementById("src-alq").innerHTML=srcLine(DS.alq,lastDate?mLabel:nY);
+    }
   }catch(e){
     boxErr(kp,e,()=>renderEco(unit));
-    ["c-sekdonut","c-sekline","c-noga","c-alq"].forEach(id=>chartErr(id,e,()=>renderEco(unit)));
+    const chartIds=isKanton?["c-sekdonut","c-sekline","c-noga","c-alq"]:["c-sekdonut","c-sekline"];
+    chartIds.forEach(id=>chartErr(id,e,()=>renderEco(unit)));
     document.getElementById("ecoIntro").textContent="Die Wirtschaftsdaten konnten nicht geladen werden.";
   }
 }
