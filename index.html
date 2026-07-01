@@ -316,13 +316,15 @@ const DS={
   alt:"dvs_awt_soci_202502111",     // Bevölkerung nach Altersklasse (Alterspyramide)
   fin:"dfg_afg_econ_20260326",      // Finanzkennzahlen der Gemeinden (typ/betrag)
   eco:"dvs_awt_econ_20250812",      // Arbeitsstätten und Beschäftigte nach Sektor/Gemeinde
+  ecoKtn:"dvs_awt_econ_20250819",   // Arbeitsstätten und Beschäftigte direkt auf Kantonsebene (Wirtschaftsart-Total)
   noga:"dvs_awt_econ_20250821",     // Beschäftigte nach NOGA-Abteilung (Kanton)
   alq:"dvs_kiga_econ_20260128"      // Arbeitslosenquote (Kanton)
 };
 const DS_TITLE={
   [DS.hier]:"Institutionelle Gliederung", [DS.grenz]:"Administrative Grundeinheiten",
   [DS.bil]:"Demografische Bilanz", [DS.alt]:"Wohnbevölkerung nach Altersklasse",
-  [DS.fin]:"Finanzkennzahlen der Gemeinden", [DS.eco]:"Arbeitsstätten und Beschäftigte",
+  [DS.fin]:"Finanzkennzahlen der Gemeinden", [DS.eco]:"Arbeitsstätten und Beschäftigte (Gemeinde)",
+  [DS.ecoKtn]:"Arbeitsstätten und Beschäftigte (Kanton)",
   [DS.noga]:"Beschäftigte nach NOGA-Abteilung", [DS.alq]:"Arbeitslose und Arbeitslosenquote"
 };
 const C={
@@ -701,11 +703,19 @@ async function renderFin(unit){
 /* ==========================================================================
    KAPITEL III — WIRTSCHAFT
    ========================================================================== */
-let ECO_ALL=null,NOGA_ALL=null,ALQ_ALL=null;
+let ECO_ALL=null,ECO_KTN=null,NOGA_ALL=null,ALQ_ALL=null;
 async function loadEco(){if(!ECO_ALL)ECO_ALL=await expJson(DS.eco,{select:"jahr,gemeinde_code,wirtschaftssektor,arbeitsstaetten,beschaeftigte,vollzeitaequivalente"});return ECO_ALL;}
+// Direkte Kantonswerte (Wirtschaftsart-Total): vollständiges Gesamttotal ohne Gemeinde-Summierung,
+// deckt sich (Arbeitsstätten-Basis) mit DS.eco, im Gegensatz zum "institutionelle Einheiten"-basierten
+// Sektordatensatz dvs_awt_econ_202508190, der auf Kantonsebene ~8% tiefere Beschäftigtenzahlen ausweist
+// und deshalb hier bewusst NICHT verwendet wird (inkompatible Zählbasis).
+async function loadEcoKanton(){if(!ECO_KTN)ECO_KTN=await expJson(DS.ecoKtn,{select:"jahr,arbeitsstaetten,beschaeftigte,vollzeitaequivalente",where:"wirtschaftsart_name='Wirtschaftsart - Total'"});return ECO_KTN;}
 async function loadNoga(){if(!NOGA_ALL)NOGA_ALL=await expJson(DS.noga,{select:"jahr,wirtschaftsabteilung,beschaeftigte,vollzeitaequivalente"});return NOGA_ALL;}
 async function loadAlq(){if(!ALQ_ALL)ALQ_ALL=await expJson(DS.alq,{select:"datum,jahr,wert",where:`metrik='${C.ALQ}'`});return ALQ_ALL;}
 
+// Aggregation über Gemeinden – für die Sektor-Aufteilung (Primär/Sekundär/Tertiär) gibt es auf
+// data.gr.ch weder für Kanton noch für Region einen Datensatz auf derselben Zählbasis wie DS.eco;
+// diese Aufsummierung bleibt daher für alle Ebenen die einzige verfügbare Quelle der Sektor-Charts.
 function ecoAggregate(rows,memberSet){
   const by={};
   rows.forEach(r=>{if(!memberSet.has(String(r.gemeinde_code)))return;const s=r.wirtschaftssektor;if(!SEK.includes(s))return;const y=yr(r.jahr);
@@ -715,6 +725,7 @@ function ecoAggregate(rows,memberSet){
   Object.keys(by).forEach(y=>{const t={arb:0,besch:0,vzae:0};SEK.forEach(s=>{const v=by[y][s]||{arb:0,besch:0,vzae:0};t.arb+=v.arb;t.besch+=v.besch;t.vzae+=v.vzae;});by[y].__total=t;});
   return by;
 }
+function ktnTotalsByYear(rows){const by={};rows.forEach(r=>{by[yr(r.jahr)]={arb:+r.arbeitsstaetten||0,besch:+r.beschaeftigte||0,vzae:+r.vollzeitaequivalente||0};});return by;}
 
 async function renderEco(unit){
   const kp=document.getElementById("ecoKpis");
@@ -722,32 +733,45 @@ async function renderEco(unit){
   ["c-sekdonut","c-sekline","c-noga","c-alq"].forEach(chartSkel);
   document.getElementById("ecoIntro").innerHTML='<span class="skel" style="width:80%;height:16px;border-radius:4px"></span>';
   try{
-    const eco=await loadEco();
-    const memberSet=new Set(unit.memberBfs);
-    const by=ecoAggregate(eco,memberSet);
-    const cantonBy=ecoAggregate(eco,new Set(S.allGemBfs));
+    const isKanton=unit.bfs==="GR";
+    const [eco,ktnTotRows]=await Promise.all([loadEco(),loadEcoKanton()]);
+    const ktnByYear=ktnTotalsByYear(ktnTotRows);
+    // Sektor-Aufteilung (Donut/Zeitreihe/Tertiärquote) bleibt für alle Ebenen Gemeinde-basiert,
+    // da keine kompatible direkte Kantons-/Regionsquelle existiert (siehe ecoAggregate-Kommentar).
+    const by=ecoAggregate(eco,new Set(unit.memberBfs));
+    // Kantonsreferenz für Vergleichswerte (Anteil am Kanton, Region-Ansicht) und – bei Kanton-Ansicht
+    // selbst – für die Kopfzahlen: hier wird bewusst die direkte, vollständige Kantonsquelle verwendet
+    // statt über alle Gemeinden zu summieren (die dabei bekannte Lücken/Unterdrückungen hätte).
+    const cantonBy=isKanton?by:ecoAggregate(eco,new Set(S.allGemBfs));
     const years=Object.keys(by).map(Number).sort((a,b)=>a-b);
     if(!years.length)throw new Error("Keine Wirtschaftsdaten für diese Einheit");
     const Y=years[years.length-1];
-    const t=by[Y].__total,ct=cantonBy[Y]?cantonBy[Y].__total:null;
-    const tertQ=t.besch?by[Y]["Tertiärer Sektor"]?.besch/t.besch*100:null;
+    const t=isKanton&&ktnByYear[Y]?ktnByYear[Y]:by[Y].__total;
+    // sekTotal bleibt die Gemeinde-summierte Grösse (Basis der Sektor-Charts): tertQ/Donut müssen
+    // intern konsistent mit den angezeigten Sektor-Balken bleiben, auch wenn t (Kopfzahl) für den
+    // Kanton aus der vollständigeren Direktquelle stammt und daher minim höher ausfallen kann.
+    const sekTotal=by[Y].__total.besch;
+    const ct=cantonBy[Y]?cantonBy[Y].__total:null;
+    const ctFull=isKanton?t:(ktnByYear[Y]||ct);
+    const tertQ=sekTotal?by[Y]["Tertiärer Sektor"]?.besch/sekTotal*100:null;
     const cantonTertQ=ct&&ct.besch?cantonBy[Y]["Tertiärer Sektor"]?.besch/ct.besch*100:null;
-    const shareBesch=ct&&ct.besch?t.besch/ct.besch*100:null;
+    const shareBesch=ctFull&&ctFull.besch?t.besch/ctFull.besch*100:null;
+    const headlineSrc=isKanton?DS.ecoKtn:DS.eco;
 
     document.getElementById("ecoIntro").innerHTML=`<span class="lede">In ${esc(unit.display||unit.name)} zählt die Unternehmensstruktur per ${Y} ${fmtInt(t.besch)} Beschäftigte in ${fmtInt(t.arb)} Arbeitsstätten.</span> Das entspricht ${fmtInt(t.vzae)} Vollzeitäquivalenten. Der tertiäre Sektor stellt ${tertQ!=null?fmtDec(tertQ,1)+"%":NODATA} der Beschäftigung.`;
 
     const cmp=(label,val,ref,fmt,suf="")=>ref==null||val==null?"":`<div class="cmp-row"><span class="arrow ${val>=ref?"up":"down"}">${val>=ref?"▲":"▼"}</span>${label} <b>${fmt(ref)}${suf}</b></div>`;
     kp.innerHTML=[
-      {cls:"",kl:"Beschäftigte "+Y,kv:fmtInt(t.besch),cmp:unit.bfs!=="GR"&&shareBesch!=null?`<div class="cmp-row"><b>${fmtDec(shareBesch,1)}%</b> des Kantons</div>`:"",src:DS.eco},
-      {cls:"k-slate",kl:"Vollzeitäquivalente "+Y,kv:fmtInt(t.vzae),cmp:t.besch?`<div class="cmp-row">Ø ${fmtDec(t.vzae/t.besch*100,0)}% Pensum</div>`:"",src:DS.eco},
-      {cls:"k-ochre",kl:"Arbeitsstätten "+Y,kv:fmtInt(t.arb),cmp:t.arb?`<div class="cmp-row">Ø ${fmtDec(t.besch/t.arb,1)} Beschäftigte je Stätte</div>`:"",src:DS.eco},
-      {cls:"k-sage",kl:"Tertiärquote "+Y,kv:tertQ!=null?fmtDec(tertQ,1):NODATA,unit:"%",cmp:unit.bfs!=="GR"?cmp("Kanton",tertQ,cantonTertQ,v=>fmtDec(v,1),"%"):"",src:DS.eco}
+      {cls:"",kl:"Beschäftigte "+Y,kv:fmtInt(t.besch),cmp:!isKanton&&shareBesch!=null?`<div class="cmp-row"><b>${fmtDec(shareBesch,1)}%</b> des Kantons</div>`:"",src:headlineSrc},
+      {cls:"k-slate",kl:"Vollzeitäquivalente "+Y,kv:fmtInt(t.vzae),cmp:t.besch?`<div class="cmp-row">Ø ${fmtDec(t.vzae/t.besch*100,0)}% Pensum</div>`:"",src:headlineSrc},
+      {cls:"k-ochre",kl:"Arbeitsstätten "+Y,kv:fmtInt(t.arb),cmp:t.arb?`<div class="cmp-row">Ø ${fmtDec(t.besch/t.arb,1)} Beschäftigte je Stätte</div>`:"",src:headlineSrc},
+      {cls:"k-sage",kl:"Tertiärquote "+Y,kv:tertQ!=null?fmtDec(tertQ,1):NODATA,unit:"%",cmp:!isKanton?cmp("Kanton",tertQ,cantonTertQ,v=>fmtDec(v,1),"%"):"",src:DS.eco}
     ].map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.kl}</div><div class="kv${k.kv===NODATA?" nd":""}">${k.kv}${k.unit&&k.kv!==NODATA?`<small>${k.unit}</small>`:""}</div><div class="kcmp">${k.cmp}</div><div class="ksrc">Quelle ${k.src}</div></div>`).join("");
 
     // Donut Sektoren
-    document.getElementById("sub-sekdonut").innerHTML=`Verteilung der ${fmtInt(t.besch)} Beschäftigten auf die drei Wirtschaftssektoren, ${Y}.`;
+    document.getElementById("sub-sekdonut").innerHTML=`Verteilung der ${fmtInt(sekTotal)} Beschäftigten auf die drei Wirtschaftssektoren, ${Y}.`;
     const cD=mkChart("c-sekdonut");
-    cD.setOption({tooltip:Object.assign({trigger:"item",formatter:p=>`${p.name}<br><b>${fmtInt(p.value)}</b> Beschäftigte (${fmtDec(p.percent,1)}%)`},TT),legend:{orient:"vertical",right:6,top:"center",itemWidth:11,itemHeight:11,textStyle:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11}},series:[{type:"pie",radius:["52%","78%"],center:["36%","50%"],avoidLabelOverlap:true,itemStyle:{borderColor:"#fbfcfa",borderWidth:2},label:{show:false},data:SEK.map(s=>({name:SEK_SHORT[s],value:by[Y][s]?by[Y][s].besch:0,itemStyle:{color:SEKCOL[s]}}))}],graphic:{type:"text",left:"33%",top:"46%",style:{text:fmtInt(t.besch),fontFamily:"Fraunces",fontSize:22,fontWeight:600,fill:PAL.ink,textAlign:"center"}}});
+    cD.setOption({tooltip:Object.assign({trigger:"item",formatter:p=>`${p.name}<br><b>${fmtInt(p.value)}</b> Beschäftigte (${fmtDec(p.percent,1)}%)`},TT),legend:{orient:"vertical",right:6,top:"center",itemWidth:11,itemHeight:11,textStyle:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11}},series:[{type:"pie",radius:["52%","78%"],center:["36%","50%"],avoidLabelOverlap:true,itemStyle:{borderColor:"#fbfcfa",borderWidth:2},label:{show:false},data:SEK.map(s=>({name:SEK_SHORT[s],value:by[Y][s]?by[Y][s].besch:0,itemStyle:{color:SEKCOL[s]}}))}],graphic:{type:"text",left:"33%",top:"46%",style:{text:fmtInt(sekTotal),fontFamily:"Fraunces",fontSize:22,fontWeight:600,fill:PAL.ink,textAlign:"center"}}});
     document.getElementById("src-sekdonut").innerHTML=srcLine(DS.eco,Y);
 
     // Stacked Sektoren-Zeitreihe
@@ -791,7 +815,7 @@ function select(){
   renderBev(unit);renderFin(unit);renderEco(unit);
 }
 function footerSources(){
-  const ids=[DS.bil,DS.alt,DS.grenz,DS.fin,DS.eco,DS.noga,DS.alq,DS.hier];
+  const ids=[DS.bil,DS.alt,DS.grenz,DS.fin,DS.eco,DS.ecoKtn,DS.noga,DS.alq,DS.hier];
   document.getElementById("footSources").innerHTML=ids.map(id=>`<li>${esc(DS_TITLE[id])}<span class="did">${id}</span></li>`).join("");
   const d=new Date();document.getElementById("footUpd").textContent="Live abgerufen · "+d.toLocaleDateString("de-CH",{day:"2-digit",month:"long",year:"numeric"});
 }
