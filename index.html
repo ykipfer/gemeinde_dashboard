@@ -627,8 +627,25 @@ async function renderBev(unit){
 /* ==========================================================================
    KAPITEL II — GEMEINDEFINANZEN (nur Gemeinde)
    ========================================================================== */
-let FIN_ALL=null;
+let FIN_ALL=null,POP_SNAP=null;
 async function loadFin(){if(!FIN_ALL)FIN_ALL=await expJson(DS.fin,{select:"jahr,bfs_nummer,typ,betrag"});return FIN_ALL;}
+// Bevölkerungsschnappschuss aller Gemeinden (ein Wert je Gemeinde, aktuellstes Jahr) als Grundlage
+// für die Grössenvergleichsgruppe – ersetzt die früheren Regions-/Kantonsvergleiche.
+async function loadPopSnapshot(){if(!POP_SNAP)POP_SNAP=await expJson(DS.bil,{select:"bfs_nummer,jahr,bestand_am_31_dezember",where:`geschlecht='${C.G_TOT_B}' and staatsangehorigkeit_kategorie='${C.KAT_TOT}'`});return POP_SNAP;}
+function latestPopByBfs(rows,bfsSet){
+  const by={};
+  rows.forEach(r=>{const b=String(r.bfs_nummer);if(!bfsSet.has(b))return;const y=yr(r.jahr);const v=+r.bestand_am_31_dezember;if(!isFinite(v))return;if(!by[b]||y>by[b].y)by[b]={y,v};});
+  const out={};Object.keys(by).forEach(b=>out[b]=by[b].v);
+  return out;
+}
+// Die n Gemeinden mit der ähnlichsten Einwohnerzahl (aus den Kandidaten, die auch Finanzdaten führen).
+function peerGroup(popByBfs,unitBfs,candidates,n=10){
+  const unitPop=popByBfs[unitBfs];
+  if(unitPop==null)return[];
+  return candidates.filter(b=>b!==unitBfs&&popByBfs[b]!=null)
+    .sort((a,b)=>Math.abs(popByBfs[a]-unitPop)-Math.abs(popByBfs[b]-unitPop))
+    .slice(0,n);
+}
 
 async function renderFin(unit){
   const body=document.getElementById("finBody"),hint=document.getElementById("finHint");
@@ -644,54 +661,57 @@ async function renderFin(unit){
   ["c-finnet","c-finsfg","c-fincmp"].forEach(chartSkel);
   document.getElementById("finIntro").innerHTML='<span class="skel" style="width:80%;height:16px;border-radius:4px"></span>';
   try{
-    const all=await loadFin();
+    const [all,popRows]=await Promise.all([loadFin(),loadPopSnapshot()]);
     const mine=all.filter(r=>String(r.bfs_nummer)===unit.bfs);
     if(!mine.length)throw new Error("Keine Finanzkennzahlen für diese Gemeinde");
     const Y=maxYr(mine);
-    const memberSet=new Set(S.regions.find(r=>r.bfs===unit.regionBfs)?.memberBfs||[]);
-    const cantonSet=new Set(S.allGemBfs);
+    // Vergleichsgruppe: die 10 Gemeinden mit der ähnlichsten Einwohnerzahl (statt Region-/Kantonsmittel).
+    const finBfsSet=new Set(all.map(r=>String(r.bfs_nummer)));
+    const popByBfs=latestPopByBfs(popRows,finBfsSet);
+    const peerBfs=peerGroup(popByBfs,unit.bfs,Array.from(finBfsSet),10);
+    const peerSet=new Set(peerBfs);
+    const peerNames=peerBfs.map(b=>S.gemList.find(g=>g.bfs===b)?.name||b);
+    const peerLabel=`Ø ähnl. Gemeinden (n=${peerSet.size})`;
+    const unitPop=popByBfs[unit.bfs];
     const seriesOf=t=>{const m={};mine.filter(r=>r.typ===t).forEach(r=>{const v=+r.betrag;if(isFinite(v))m[yr(r.jahr)]=v;});return m;};
     const val=(t,y=Y)=>{const r=mine.find(x=>x.typ===t&&yr(x.jahr)===y);return r?+r.betrag:null;};
     const avg=(t,set,y=Y)=>{const vs=all.filter(r=>r.typ===t&&yr(r.jahr)===y&&set.has(String(r.bfs_nummer))).map(r=>+r.betrag).filter(isFinite);return vs.length?vs.reduce((a,b)=>a+b,0)/vs.length:null;};
 
     const net=val(FT.net),sfg=val(FT.sfg),sfa=val(FT.sfa),brutto=val(FT.brutto);
-    const netC=avg(FT.net,cantonSet),netR=avg(FT.net,memberSet);
-    const sfgC=avg(FT.sfg,cantonSet),sfgR=avg(FT.sfg,memberSet);
-    const sfaC=avg(FT.sfa,cantonSet),sfaR=avg(FT.sfa,memberSet);
-    const bruttoC=avg(FT.brutto,cantonSet),bruttoR=avg(FT.brutto,memberSet);
+    const netP=avg(FT.net,peerSet),sfgP=avg(FT.sfg,peerSet),sfaP=avg(FT.sfa,peerSet),bruttoP=avg(FT.brutto,peerSet);
 
     const netLabel=net!=null?(net<0?"Nettovermögen":"Nettoschuld"):"";
-    document.getElementById("finIntro").innerHTML=`<span class="lede">Die Finanzkennzahlen von ${esc(unit.name)} folgen dem harmonisierten Rechnungsmodell HRM2; aktuellstes Rechnungsjahr ist ${Y}.</span> ${net!=null?`Pro Kopf resultiert ein ${netLabel} von ${fmtInt(Math.abs(net))} CHF.`:""} Ein kommunaler Steuerfuss wird auf data.gr.ch nicht als offener Datensatz geführt und ist daher als keine Daten ausgewiesen.`;
+    document.getElementById("finIntro").innerHTML=`<span class="lede">Die Finanzkennzahlen von ${esc(unit.name)} folgen dem harmonisierten Rechnungsmodell HRM2; aktuellstes Rechnungsjahr ist ${Y}.</span> ${net!=null?`Pro Kopf resultiert ein ${netLabel} von ${fmtInt(Math.abs(net))} CHF.`:""} Verglichen wird mit den ${peerSet.size} Gemeinden mit ähnlicher Einwohnerzahl${unitPop!=null?` (${esc(unit.name)}: ${fmtInt(unitPop)} Einw.)`:""}. Ein kommunaler Steuerfuss wird auf data.gr.ch nicht als offener Datensatz geführt und ist daher als keine Daten ausgewiesen.`;
 
     const cmp=(label,val,ref,fmt,suf="")=>ref==null||val==null?"":`<div class="cmp-row"><span class="arrow ${val>=ref?"up":"down"}">${val>=ref?"▲":"▼"}</span>${label} <b>${fmt(ref)}${suf}</b></div>`;
     kp.innerHTML=[
-      {cls:net!=null&&net<0?"":"k-rust",kl:(netLabel||"Nettoschuld/-vermögen")+" je Einw. "+Y,kv:net!=null?fmtInt(Math.abs(net)):NODATA,unit:"CHF",cmp:cmp("Region",net,netR,v=>fmtInt(Math.abs(v)),"")+cmp("Kanton",net,netC,v=>fmtInt(Math.abs(v)),""),src:DS.fin},
-      {cls:"k-ochre",kl:"Selbstfinanzierungsgrad "+Y,kv:sfg!=null?fmtDec(sfg,0):NODATA,unit:"%",cmp:cmp("Region",sfg,sfgR,v=>fmtDec(v,0),"%")+cmp("Kanton",sfg,sfgC,v=>fmtDec(v,0),"%"),src:DS.fin},
-      {cls:"k-slate",kl:"Selbstfinanzierungsanteil "+Y,kv:sfa!=null?fmtDec(sfa,1):NODATA,unit:"%",cmp:cmp("Region",sfa,sfaR,v=>fmtDec(v,1),"%")+cmp("Kanton",sfa,sfaC,v=>fmtDec(v,1),"%"),src:DS.fin},
-      {cls:"k-sage",kl:"Bruttoverschuldungsanteil "+Y,kv:brutto!=null?fmtDec(brutto,0):NODATA,unit:"%",cmp:cmp("Region",brutto,bruttoR,v=>fmtDec(v,0),"%")+cmp("Kanton",brutto,bruttoC,v=>fmtDec(v,0),"%"),src:DS.fin},
+      {cls:net!=null&&net<0?"":"k-rust",kl:(netLabel||"Nettoschuld/-vermögen")+" je Einw. "+Y,kv:net!=null?fmtInt(Math.abs(net)):NODATA,unit:"CHF",cmp:cmp(peerLabel,net,netP,v=>fmtInt(Math.abs(v)),""),src:DS.fin},
+      {cls:"k-ochre",kl:"Selbstfinanzierungsgrad "+Y,kv:sfg!=null?fmtDec(sfg,0):NODATA,unit:"%",cmp:cmp(peerLabel,sfg,sfgP,v=>fmtDec(v,0),"%"),src:DS.fin},
+      {cls:"k-slate",kl:"Selbstfinanzierungsanteil "+Y,kv:sfa!=null?fmtDec(sfa,1):NODATA,unit:"%",cmp:cmp(peerLabel,sfa,sfaP,v=>fmtDec(v,1),"%"),src:DS.fin},
+      {cls:"k-sage",kl:"Bruttoverschuldungsanteil "+Y,kv:brutto!=null?fmtDec(brutto,0):NODATA,unit:"%",cmp:cmp(peerLabel,brutto,bruttoP,v=>fmtDec(v,0),"%"),src:DS.fin},
       {cls:"",kl:"Steuerfuss",kv:NODATA,nd:true,cmp:`<div class="cmp-row">nicht als OGD-Datensatz geführt</div>`,src:"n/a"}
     ].map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.kl}</div><div class="kv${k.kv===NODATA?" nd":""}">${k.kv}${k.unit&&k.kv!==NODATA?`<small>${k.unit}</small>`:""}</div><div class="kcmp">${k.cmp}</div><div class="ksrc">Quelle ${k.src}</div></div>`).join("");
 
-    // Zeitreihe Nettoverm./-schuld je Einw. (mit Regions-/Kantonsmittel)
+    // Zeitreihe Nettoverm./-schuld je Einw. (mit Vergleichsgruppenmittel)
     const netS=seriesOf(FT.net);const nY=Object.keys(netS).map(Number).sort((a,b)=>a-b);
-    const netCS=nY.map(y=>avg(FT.net,cantonSet,y)),netRS=nY.map(y=>avg(FT.net,memberSet,y));
-    document.getElementById("sub-finnet").innerHTML=`Negative Werte bedeuten Nettovermögen. Vergleich mit Regions- und Kantonsmittel.`;
+    const netPS=nY.map(y=>avg(FT.net,peerSet,y));
+    document.getElementById("sub-finnet").innerHTML=`Negative Werte bedeuten Nettovermögen. Vergleich mit dem Mittel ähnlich grosser Gemeinden.`;
     const cNet=mkChart("c-finnet");
-    cNet.setOption({tooltip:Object.assign({trigger:"axis",valueFormatter:v=>v==null?NODATA:fmtInt(v)+" CHF"},TT),legend:{data:[unit.name,"Region Ø","Kanton Ø"],top:0,right:2,itemWidth:11,itemHeight:11,textStyle:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10}},grid:GRID({top:34}),xAxis:Object.assign({type:"category",data:nY,boundaryGap:false},AXBASE),yAxis:Object.assign({type:"value",axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11,formatter:v=>fmtInt(v)}},AXBASE),series:[{name:unit.name,type:"line",smooth:.3,symbol:"circle",symbolSize:6,data:nY.map(y=>netS[y]),lineStyle:{color:PAL.pine,width:2.6},itemStyle:{color:PAL.pine},markLine:{silent:true,symbol:"none",lineStyle:{color:PAL.hair,type:"dashed"},data:[{yAxis:0}]}},{name:"Region Ø",type:"line",smooth:.3,showSymbol:false,data:netRS,lineStyle:{color:PAL.ochre,width:1.6,type:"dashed"},itemStyle:{color:PAL.ochre}},{name:"Kanton Ø",type:"line",smooth:.3,showSymbol:false,data:netCS,lineStyle:{color:PAL.ink3,width:1.6,type:"dotted"},itemStyle:{color:PAL.ink3}}]});
+    cNet.setOption({tooltip:Object.assign({trigger:"axis",valueFormatter:v=>v==null?NODATA:fmtInt(v)+" CHF"},TT),legend:{data:[unit.name,peerLabel],top:0,right:2,itemWidth:11,itemHeight:11,textStyle:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10}},grid:GRID({top:34}),xAxis:Object.assign({type:"category",data:nY,boundaryGap:false},AXBASE),yAxis:Object.assign({type:"value",axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11,formatter:v=>fmtInt(v)}},AXBASE),series:[{name:unit.name,type:"line",smooth:.3,symbol:"circle",symbolSize:6,data:nY.map(y=>netS[y]),lineStyle:{color:PAL.pine,width:2.6},itemStyle:{color:PAL.pine},markLine:{silent:true,symbol:"none",lineStyle:{color:PAL.hair,type:"dashed"},data:[{yAxis:0}]}},{name:peerLabel,type:"line",smooth:.3,showSymbol:false,data:netPS,lineStyle:{color:PAL.ochre,width:1.6,type:"dashed"},itemStyle:{color:PAL.ochre}}]});
     document.getElementById("src-finnet").innerHTML=srcLine(DS.fin,Y);
 
     // Zeitreihe Selbstfinanzierungsgrad
     const sfgS=seriesOf(FT.sfg);const sY=Object.keys(sfgS).map(Number).sort((a,b)=>a-b);
-    document.getElementById("sub-finsfg").innerHTML=`Richtwert langfristig gegen 100%. Kantonsmittel gestrichelt.`;
+    document.getElementById("sub-finsfg").innerHTML=`Richtwert langfristig gegen 100%. Mittel ähnlich grosser Gemeinden gestrichelt.`;
     const cSfg=mkChart("c-finsfg");
-    cSfg.setOption({tooltip:Object.assign({trigger:"axis",valueFormatter:v=>v==null?NODATA:fmtDec(v,1)+"%"},TT),legend:{data:[unit.name,"Kanton Ø"],top:0,right:2,itemWidth:11,itemHeight:11,textStyle:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10}},grid:GRID({top:34}),xAxis:Object.assign({type:"category",data:sY,boundaryGap:false},AXBASE),yAxis:Object.assign({type:"value",axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11,formatter:v=>v+"%"}},AXBASE),series:[{name:unit.name,type:"bar",data:sY.map(y=>sfgS[y]),itemStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:PAL.ochreL},{offset:1,color:PAL.ochre}]),borderRadius:[4,4,0,0]},barWidth:"46%",markLine:{silent:true,symbol:"none",lineStyle:{color:PAL.pineL,type:"dashed"},label:{formatter:"100%",color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10},data:[{yAxis:100}]}},{name:"Kanton Ø",type:"line",smooth:.3,showSymbol:false,data:sY.map(y=>avg(FT.sfg,cantonSet,y)),lineStyle:{color:PAL.ink3,width:1.6,type:"dotted"},itemStyle:{color:PAL.ink3}}]});
+    cSfg.setOption({tooltip:Object.assign({trigger:"axis",valueFormatter:v=>v==null?NODATA:fmtDec(v,1)+"%"},TT),legend:{data:[unit.name,peerLabel],top:0,right:2,itemWidth:11,itemHeight:11,textStyle:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10}},grid:GRID({top:34}),xAxis:Object.assign({type:"category",data:sY,boundaryGap:false},AXBASE),yAxis:Object.assign({type:"value",axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11,formatter:v=>v+"%"}},AXBASE),series:[{name:unit.name,type:"bar",data:sY.map(y=>sfgS[y]),itemStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:PAL.ochreL},{offset:1,color:PAL.ochre}]),borderRadius:[4,4,0,0]},barWidth:"46%",markLine:{silent:true,symbol:"none",lineStyle:{color:PAL.pineL,type:"dashed"},label:{formatter:"100%",color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10},data:[{yAxis:100}]}},{name:peerLabel,type:"line",smooth:.3,showSymbol:false,data:sY.map(y=>avg(FT.sfg,peerSet,y)),lineStyle:{color:PAL.ink3,width:1.6,type:"dotted"},itemStyle:{color:PAL.ink3}}]});
     document.getElementById("src-finsfg").innerHTML=srcLine(DS.fin,Y);
 
     // Vergleichsbalken
     const cmpTypes=[["Selbstfinanz.-grad",FT.sfg,0],["Selbstfinanz.-anteil",FT.sfa,1],["Bruttoverschuld.",FT.brutto,0],["Kapitaldienst",FT.kap,1],["Investitionsanteil",FT.inv,1]];
-    document.getElementById("sub-fincmp").innerHTML=`Ausgewählte Kennzahlen in Prozent, ${Y}: <b>${esc(unit.name)}</b> gegenüber Regions- und Kantonsmittel.`;
+    document.getElementById("sub-fincmp").innerHTML=`Ausgewählte Kennzahlen in Prozent, ${Y}: <b>${esc(unit.name)}</b> gegenüber dem Mittel der ${peerSet.size} einwohnerzahlmässig ähnlichsten Gemeinden${peerNames.length?" ("+esc(peerNames.join(", "))+")":""}.`;
     const cCmp=mkChart("c-fincmp");
-    cCmp.setOption({tooltip:Object.assign({trigger:"axis",axisPointer:{type:"shadow"},valueFormatter:v=>v==null?NODATA:fmtDec(v,1)+"%"},TT),legend:{data:[unit.name,"Region Ø","Kanton Ø"],top:0,right:2,itemWidth:11,itemHeight:11,textStyle:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10}},grid:GRID({top:34}),xAxis:Object.assign({type:"category",data:cmpTypes.map(t=>t[0])},AXBASE),yAxis:Object.assign({type:"value",axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11,formatter:v=>v+"%"}},AXBASE),series:[{name:unit.name,type:"bar",data:cmpTypes.map(t=>val(t[1])),itemStyle:{color:PAL.pine,borderRadius:[3,3,0,0]},barWidth:16},{name:"Region Ø",type:"bar",data:cmpTypes.map(t=>avg(t[1],memberSet)),itemStyle:{color:PAL.ochre,borderRadius:[3,3,0,0]},barWidth:16},{name:"Kanton Ø",type:"bar",data:cmpTypes.map(t=>avg(t[1],cantonSet)),itemStyle:{color:PAL.stone2,borderRadius:[3,3,0,0]},barWidth:16}]});
+    cCmp.setOption({tooltip:Object.assign({trigger:"axis",axisPointer:{type:"shadow"},valueFormatter:v=>v==null?NODATA:fmtDec(v,1)+"%"},TT),legend:{data:[unit.name,peerLabel],top:0,right:2,itemWidth:11,itemHeight:11,textStyle:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:10}},grid:GRID({top:34}),xAxis:Object.assign({type:"category",data:cmpTypes.map(t=>t[0])},AXBASE),yAxis:Object.assign({type:"value",axisLabel:{color:PAL.ink3,fontFamily:"IBM Plex Mono",fontSize:11,formatter:v=>v+"%"}},AXBASE),series:[{name:unit.name,type:"bar",data:cmpTypes.map(t=>val(t[1])),itemStyle:{color:PAL.pine,borderRadius:[3,3,0,0]},barWidth:20},{name:peerLabel,type:"bar",data:cmpTypes.map(t=>avg(t[1],peerSet)),itemStyle:{color:PAL.ochre,borderRadius:[3,3,0,0]},barWidth:20}]});
     document.getElementById("src-fincmp").innerHTML=srcLine(DS.fin,Y);
   }catch(e){
     boxErr(kp,e,()=>renderFin(unit));
