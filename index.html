@@ -248,10 +248,9 @@ a{color:var(--pine);text-decoration:none}a:hover{text-decoration:underline}
         <div class="card"><div class="card-h"><div class="card-t">Selbstfinanzierungsgrad</div><div class="card-tag">Prozent · Zeitreihe</div></div><div class="card-sub" id="sub-finsfg"></div><div class="chart" id="c-finsfg"></div><div class="src" id="src-finsfg"></div></div>
       </div>
       <div class="grid1">
-        <div class="card span2"><div class="card-h"><div class="card-t">Kennzahlenvergleich mit Region und Kanton</div><div class="card-tag">Aktuellstes Jahr</div></div><div class="card-sub" id="sub-fincmp"></div><div class="chart" id="c-fincmp"></div><div class="src" id="src-fincmp"></div></div>
+        <div class="card span2"><div class="card-h"><div class="card-t">Kennzahlenvergleich mit ähnlich grossen Gemeinden</div><div class="card-tag">Aktuellstes Jahr</div></div><div class="card-sub" id="sub-fincmp"></div><div class="chart" id="c-fincmp"></div><div class="src" id="src-fincmp"></div></div>
       </div>
     </div>
-    <div id="finHint" style="display:none"></div>
   </section>
 
   <section class="chapter" id="ch-eco">
@@ -648,16 +647,16 @@ function peerGroup(popByBfs,unitBfs,candidates,n=10){
 }
 
 async function renderFin(unit){
-  const body=document.getElementById("finBody"),hint=document.getElementById("finHint");
+  const chapter=document.getElementById("ch-fin");
+  // Gemeindefinanzen liegen nur auf Gemeindeebene vor: bei Kanton/Region das gesamte Kapitel
+  // ausblenden statt nur einen Hinweis anzuzeigen.
   if(unit.level!=="gemeinde"){
-    body.style.display="none";hint.style.display="block";
-    hint.innerHTML=`<div class="empty-note"><span class="ei">◈</span>Gemeindefinanzen werden nur auf Gemeindeebene ausgewiesen (Amt für Gemeinden, harmonisiertes Rechnungsmodell HRM2). Bitte oben die Ebene <b>Gemeinde</b> wählen, um Finanzkennzahlen zu sehen.</div>`;
-    document.getElementById("finIntro").textContent="Die Kennzahlen der Jahresrechnung liegen für einzelne Gemeinden vor. Aktuell ist eine übergeordnete Ebene gewählt.";
+    chapter.style.display="none";
     return;
   }
-  body.style.display="block";hint.style.display="none";
+  chapter.style.display="";
   const kp=document.getElementById("finKpis");
-  kp.innerHTML=Array(5).fill('<div class="kpi"><div class="kl skel" style="width:60%;height:12px"></div><div class="kv skel" style="width:80%;height:30px;margin-top:12px"></div></div>').join("");
+  kp.innerHTML=Array(4).fill('<div class="kpi"><div class="kl skel" style="width:60%;height:12px"></div><div class="kv skel" style="width:80%;height:30px;margin-top:12px"></div></div>').join("");
   ["c-finnet","c-finsfg","c-fincmp"].forEach(chartSkel);
   document.getElementById("finIntro").innerHTML='<span class="skel" style="width:80%;height:16px;border-radius:4px"></span>';
   try{
@@ -681,15 +680,14 @@ async function renderFin(unit){
     const netP=avg(FT.net,peerSet),sfgP=avg(FT.sfg,peerSet),sfaP=avg(FT.sfa,peerSet),bruttoP=avg(FT.brutto,peerSet);
 
     const netLabel=net!=null?(net<0?"Nettovermögen":"Nettoschuld"):"";
-    document.getElementById("finIntro").innerHTML=`<span class="lede">Die Finanzkennzahlen von ${esc(unit.name)} folgen dem harmonisierten Rechnungsmodell HRM2; aktuellstes Rechnungsjahr ist ${Y}.</span> ${net!=null?`Pro Kopf resultiert ein ${netLabel} von ${fmtInt(Math.abs(net))} CHF.`:""} Verglichen wird mit den ${peerSet.size} Gemeinden mit ähnlicher Einwohnerzahl${unitPop!=null?` (${esc(unit.name)}: ${fmtInt(unitPop)} Einw.)`:""}. Ein kommunaler Steuerfuss wird auf data.gr.ch nicht als offener Datensatz geführt und ist daher als keine Daten ausgewiesen.`;
+    document.getElementById("finIntro").innerHTML=`<span class="lede">Die Finanzkennzahlen von ${esc(unit.name)} folgen dem harmonisierten Rechnungsmodell HRM2; aktuellstes Rechnungsjahr ist ${Y}.</span> ${net!=null?`Pro Kopf resultiert ein ${netLabel} von ${fmtInt(Math.abs(net))} CHF.`:""} Verglichen wird mit den ${peerSet.size} Gemeinden mit ähnlicher Einwohnerzahl${unitPop!=null?` (${esc(unit.name)}: ${fmtInt(unitPop)} Einw.)`:""}.`;
 
     const cmp=(label,val,ref,fmt,suf="")=>ref==null||val==null?"":`<div class="cmp-row"><span class="arrow ${val>=ref?"up":"down"}">${val>=ref?"▲":"▼"}</span>${label} <b>${fmt(ref)}${suf}</b></div>`;
     kp.innerHTML=[
       {cls:net!=null&&net<0?"":"k-rust",kl:(netLabel||"Nettoschuld/-vermögen")+" je Einw. "+Y,kv:net!=null?fmtInt(Math.abs(net)):NODATA,unit:"CHF",cmp:cmp(peerLabel,net,netP,v=>fmtInt(Math.abs(v)),""),src:DS.fin},
       {cls:"k-ochre",kl:"Selbstfinanzierungsgrad "+Y,kv:sfg!=null?fmtDec(sfg,0):NODATA,unit:"%",cmp:cmp(peerLabel,sfg,sfgP,v=>fmtDec(v,0),"%"),src:DS.fin},
       {cls:"k-slate",kl:"Selbstfinanzierungsanteil "+Y,kv:sfa!=null?fmtDec(sfa,1):NODATA,unit:"%",cmp:cmp(peerLabel,sfa,sfaP,v=>fmtDec(v,1),"%"),src:DS.fin},
-      {cls:"k-sage",kl:"Bruttoverschuldungsanteil "+Y,kv:brutto!=null?fmtDec(brutto,0):NODATA,unit:"%",cmp:cmp(peerLabel,brutto,bruttoP,v=>fmtDec(v,0),"%"),src:DS.fin},
-      {cls:"",kl:"Steuerfuss",kv:NODATA,nd:true,cmp:`<div class="cmp-row">nicht als OGD-Datensatz geführt</div>`,src:"n/a"}
+      {cls:"k-sage",kl:"Bruttoverschuldungsanteil "+Y,kv:brutto!=null?fmtDec(brutto,0):NODATA,unit:"%",cmp:cmp(peerLabel,brutto,bruttoP,v=>fmtDec(v,0),"%"),src:DS.fin}
     ].map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.kl}</div><div class="kv${k.kv===NODATA?" nd":""}">${k.kv}${k.unit&&k.kv!==NODATA?`<small>${k.unit}</small>`:""}</div><div class="kcmp">${k.cmp}</div><div class="ksrc">Quelle ${k.src}</div></div>`).join("");
 
     // Zeitreihe Nettoverm./-schuld je Einw. (mit Vergleichsgruppenmittel)
